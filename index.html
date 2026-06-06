@@ -380,6 +380,9 @@
   .search-clear.visible { display:flex; }
   .search-clear:hover { background:rgba(255,255,255,0.2); color:white; }
   .search-results-info { text-align:center; font-size:0.82rem; color:var(--gray); margin-top:0.5rem; }
+  .search-wrap { display:flex; flex-direction:column; gap:0.6rem; }
+  .search-btn { background:linear-gradient(135deg,var(--blue2),var(--magenta)); border:none; border-radius:50px; padding:0.7rem 2rem; color:white; font-family:'Exo 2',sans-serif; font-size:0.95rem; font-weight:700; cursor:pointer; transition:all 0.15s; width:100%; letter-spacing:0.04em; }
+  .search-btn:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(74,124,247,0.35); }
 
   /* SOBRE NOSOTROS */
   #nosotros { background: var(--navy); }
@@ -597,6 +600,9 @@
   .search-clear.visible { display:flex; }
   .search-clear:hover { background:rgba(255,255,255,0.2); color:white; }
   .search-results-info { text-align:center; font-size:0.82rem; color:var(--gray); margin-top:0.5rem; }
+  .search-wrap { display:flex; flex-direction:column; gap:0.6rem; }
+  .search-btn { background:linear-gradient(135deg,var(--blue2),var(--magenta)); border:none; border-radius:50px; padding:0.7rem 2rem; color:white; font-family:'Exo 2',sans-serif; font-size:0.95rem; font-weight:700; cursor:pointer; transition:all 0.15s; width:100%; letter-spacing:0.04em; }
+  .search-btn:hover { transform:translateY(-1px); box-shadow:0 6px 20px rgba(74,124,247,0.35); }
 
   /* SOBRE NOSOTROS */
   #nosotros { background: var(--navy); }
@@ -772,10 +778,11 @@
       <div class="search-input-wrap">
         <span class="search-icon">🔍</span>
         <input class="search-input" id="searchInput" type="text"
-          placeholder="Buscar producto, categoría..."
-          oninput="handleSearch(this.value); document.getElementById('searchClearBtn').classList.toggle('visible', this.value.length>0)">
-        <button class="search-clear" id="searchClearBtn" onclick="clearSearch()" title="Limpiar búsqueda">✕</button>
+          placeholder="Buscar producto..."
+          onkeydown="if(event.key==='Enter') window.doSearch()">
+        <button class="search-clear" id="searchClearBtn" onclick="clearSearch()" title="Limpiar">✕</button>
       </div>
+      <button class="search-btn" id="searchBtn" onclick="window.doSearch()">Buscar</button>
     </div>
 
   <div class="filter-bar">
@@ -1712,8 +1719,14 @@ expose("switchTab", tab => {
   document.querySelectorAll(".admin-tab-content").forEach(t=>t.classList.remove("active"));
   event.target.classList.add("active");
   document.getElementById("tab-"+tab).classList.add("active");
-  if (tab==="productos")   renderAdminList();
-  if (tab==="tendencias")  { renderTrendAdmin(); renderOrderAdmin(); }
+  if (tab==="productos")  renderAdminList();
+  if (tab==="tendencias") {
+    setTimeout(() => {
+      renderTrendAdmin();
+      renderOrderAdmin();
+    }, 50);
+  }
+  if (tab==="nosotros")  {}
 });
 
 function renderOrderAdmin() {
@@ -1745,7 +1758,55 @@ function renderOrderAdmin() {
     </div>`).join("");
 }
 
+expose("renderOrderAdmin", renderOrderAdmin);
+
+// ═══════════════════════════════════════════
+// TENDENCIAS ADMIN
+// ═══════════════════════════════════════════
+function renderTrendAdmin() {
+  const el = document.getElementById("trendProductList");
+  if (!el) return;
+  const real = products.filter(p => !p.isDemo);
+  if (!real.length) {
+    el.innerHTML = `<p style="color:var(--gray);text-align:center;padding:1.5rem;">No hay productos reales aún.</p>`;
+    return;
+  }
+  el.innerHTML = real.map(p => `
+    <div class="admin-product-row" style="margin-bottom:0.7rem;">
+      <div class="admin-product-thumb">
+        ${p.img ? `<img src="${p.img}" alt="${p.name}">` : `<span class="t-emoji">${p.icon||"📦"}</span>`}
+      </div>
+      <div class="admin-product-meta" style="flex:1;">
+        <strong>${p.name}</strong>
+        <small>${catLabels[p.cat]||p.cat} · ${fmt(p.price)}</small>
+      </div>
+      <div class="trend-switch-wrap">
+        <label class="trend-switch">
+          <input type="checkbox" ${p.trending?"checked":""} onchange="window.toggleTrend('${p.id}',this.checked)">
+          <span class="trend-slider"></span>
+        </label>
+        <span class="trend-switch-label" style="font-size:0.78rem;color:var(--gray);">${p.trending?"🔥 Tendencia":"Inactivo"}</span>
+      </div>
+    </div>`).join("");
+}
+
+window.toggleTrend = async function(id, checked) {
+  const p = products.find(x => x.id === id);
+  if (!p) return;
+  p.trending = checked;
+  try {
+    if (firebaseReady && db) await updateDoc(doc(db,"productos",id), {trending: checked});
+    else saveLocal();
+  } catch(e) { saveLocal(); }
+  renderCarousel();
+  renderTrendAdmin();
+  showToast(checked ? "🔥" : "✅", checked ? `"${p.name}" en tendencia` : `"${p.name}" removido`);
+};
+expose("toggleTrend", window.toggleTrend);
+expose("renderTrendAdmin", renderTrendAdmin);
+
 expose("moveProduct", async (id, direction) => {
+  window.moveProduct = window.moveProduct || window["moveProduct"]; // ensure accessible
   const real = products.filter(p => !p.isDemo);
   const idx  = real.findIndex(p => p.id === id);
   const nIdx = idx + direction;
@@ -2469,18 +2530,25 @@ expose("adminTriggerAboutImg", window.adminTriggerAboutImg);
 // ═══════════════════════════════════════════
 let searchQuery = "";
 
-window.handleSearch = function(val) {
-  searchQuery = (val||"").toLowerCase().trim();
+window.doSearch = function() {
+  const inp = document.getElementById("searchInput");
+  searchQuery = (inp ? inp.value : "").toLowerCase().trim();
+  const clearBtn = document.getElementById("searchClearBtn");
+  if(clearBtn) clearBtn.classList.toggle("visible", searchQuery.length > 0);
   renderProducts();
   if(searchQuery) {
-    document.getElementById("productos")?.scrollIntoView({behavior:"smooth"});
+    setTimeout(() => document.getElementById("productos")?.scrollIntoView({behavior:"smooth"}), 100);
   }
 };
+
+window.handleSearch = window.doSearch;
 
 window.clearSearch = function() {
   searchQuery = "";
   const inp = document.getElementById("searchInput");
   if(inp) inp.value = "";
+  const clearBtn = document.getElementById("searchClearBtn");
+  if(clearBtn) clearBtn.classList.remove("visible");
   renderProducts();
 };
 
