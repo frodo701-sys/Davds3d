@@ -1457,7 +1457,7 @@ function loadLocalProducts() {
     products = [...defaultProducts];
   }
   renderProducts();
-  renderCarousel();
+  if(typeof renderCarousel==="function") renderCarousel();
   loadVideo();
 }
 
@@ -1798,7 +1798,7 @@ window.toggleTrend = async function(id, checked) {
     if (firebaseReady && db) await updateDoc(doc(db,"productos",id), {trending: checked});
     else saveLocal();
   } catch(e) { saveLocal(); }
-  renderCarousel();
+  if(typeof renderCarousel==="function") renderCarousel();
   renderTrendAdmin();
   showToast(checked ? "🔥" : "✅", checked ? `"${p.name}" en tendencia` : `"${p.name}" removido`);
 };
@@ -1827,7 +1827,7 @@ expose("moveProduct", async (id, direction) => {
   renderOrderAdmin();
   renderTrendAdmin();
   renderProducts();
-  renderCarousel();
+  if(typeof renderCarousel==="function") renderCarousel();
   showToast("↕️","Orden guardado — #"+(nIdx+1)+" "+real[idx].name);
 });
 
@@ -1874,7 +1874,7 @@ expose("saveProduct", async () => {
       }
       saveLocal();
       renderProducts();
-      renderCarousel();
+      if(typeof renderCarousel==="function") renderCarousel();
       renderCategories();
       renderAdminList();
       // Then sync to Firebase in background
@@ -1892,7 +1892,7 @@ expose("saveProduct", async () => {
       products.push(data);
       saveLocal();
       renderProducts();
-      renderCarousel();
+      if(typeof renderCarousel==="function") renderCarousel();
       renderCategories();
       renderAdminList();
       // Then sync to Firebase
@@ -2589,6 +2589,100 @@ window.clearSearch = function() {
   if(clearBtn) clearBtn.classList.remove("visible");
   renderProducts();
 };
+
+
+// ═══════════════════════════════════════════
+// CARRUSEL DE TENDENCIAS
+// ═══════════════════════════════════════════
+let _carouselIdx = 0;
+let _carouselTotal = 0;
+let _carouselTimer = null;
+
+function renderCarousel() {
+  const trending = products.filter(p => p.trending && !p.isDemo);
+  const track    = document.getElementById("carouselTrack");
+  const controls = document.getElementById("carouselControls");
+  const dots     = document.getElementById("carouselDots");
+  if (!track) return;
+
+  if (!trending.length) {
+    track.innerHTML = `<div style="width:100%;padding:2rem 1rem;text-align:center;color:var(--gray);">
+      <div style="font-size:2.5rem;margin-bottom:0.8rem;">🔥</div>
+      Activa productos en tendencia desde el Admin</div>`;
+    if (controls) controls.style.display = "none";
+    return;
+  }
+
+  const spv = window.innerWidth < 480 ? 1 : window.innerWidth < 700 ? 2 : 3;
+  _carouselTotal = Math.max(1, trending.length - spv + 1);
+
+  track.innerHTML = trending.map(p => {
+    const bg = catColors[p.cat] || "linear-gradient(135deg,#1e2535,#2e5ce840)";
+    const img = p.img
+      ? `<img class="carousel-img" src="${p.img}" alt="${p.name}" onclick="openLightbox('${p.id}')" style="cursor:pointer;">`
+      : `<div class="carousel-img-placeholder" style="background:${bg};height:280px;display:flex;align-items:center;justify-content:center;font-size:4rem;">${p.icon||"📦"}</div>`;
+    return `<div class="carousel-slide" style="min-width:calc(100% / ${spv});padding:0 0.6rem;box-sizing:border-box;">
+      <div class="carousel-card">
+        ${img}
+        <div class="carousel-overlay">
+          <div class="carousel-badge">🔥 Tendencia</div>
+          <div class="carousel-name">${p.name}</div>
+          <div class="carousel-price">${fmt(p.price)}</div>
+          <button class="carousel-add" onclick="addToCart('${p.id}')">🛒 Agregar</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  if (dots) {
+    dots.innerHTML = Array.from({length:_carouselTotal},(_,i)=>
+      `<div class="carousel-dot ${i===_carouselIdx?"active":""}" onclick="goToSlide(${i})"></div>`
+    ).join("");
+  }
+  if (controls) controls.style.display = _carouselTotal > 1 ? "flex" : "none";
+  goToSlide(0);
+  _startCarouselAuto();
+}
+window.renderCarousel = renderCarousel;
+
+function goToSlide(idx) {
+  _carouselIdx = Math.max(0, Math.min(idx, _carouselTotal-1));
+  const track = document.getElementById("carouselTrack");
+  const spv   = window.innerWidth < 480 ? 1 : window.innerWidth < 700 ? 2 : 3;
+  if (track) track.style.transform = `translateX(-${_carouselIdx * (100/spv)}%)`;
+  document.querySelectorAll(".carousel-dot").forEach((d,i)=>d.classList.toggle("active",i===_carouselIdx));
+}
+
+function _startCarouselAuto() {
+  clearInterval(_carouselTimer);
+  if (_carouselTotal > 1) {
+    _carouselTimer = setInterval(()=>{
+      _carouselIdx = _carouselIdx >= _carouselTotal-1 ? 0 : _carouselIdx+1;
+      goToSlide(_carouselIdx);
+    }, 4000);
+  }
+}
+
+expose("carouselNext", ()=>{ _carouselIdx=_carouselIdx>=_carouselTotal-1?0:_carouselIdx+1; goToSlide(_carouselIdx); _startCarouselAuto(); });
+expose("carouselPrev", ()=>{ _carouselIdx=_carouselIdx<=0?_carouselTotal-1:_carouselIdx-1; goToSlide(_carouselIdx); _startCarouselAuto(); });
+expose("goToSlide", goToSlide);
+window.carouselNext = ()=>{ _carouselIdx=_carouselIdx>=_carouselTotal-1?0:_carouselIdx+1; goToSlide(_carouselIdx); };
+window.carouselPrev = ()=>{ _carouselIdx=_carouselIdx<=0?_carouselTotal-1:_carouselIdx-1; goToSlide(_carouselIdx); };
+
+// Touch swipe
+document.addEventListener("DOMContentLoaded", ()=>{
+  let tx=0;
+  const w=document.getElementById("carouselWrap");
+  if(w){
+    w.addEventListener("touchstart",e=>{tx=e.changedTouches[0].screenX;},{passive:true});
+    w.addEventListener("touchend",e=>{
+      const d=tx-e.changedTouches[0].screenX;
+      if(Math.abs(d)>50){ d>0?window.carouselNext():window.carouselPrev(); }
+    },{passive:true});
+  }
+});
+window.addEventListener("resize", ()=>{ if(typeof renderCarousel==="function") renderCarousel(); });
+
 
 // ═══════════════════════════════════════════
 // NAVIGATION
