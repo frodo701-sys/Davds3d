@@ -1866,30 +1866,68 @@ expose("saveProduct", async () => {
   try {
     const imgUrl = currentImageData||null;
     if (editId) {
-      const data = { name,price,cat,desc,badge };
-      if (imgUrl) data.img=imgUrl;
-      if (firebaseReady) { await updateDoc(doc(db,"productos",editId),data); }
-      else { const idx=products.findIndex(p=>p.id===editId); if(idx>=0) products[idx]={...products[idx],...data}; saveLocal(); renderProducts(); renderCategories(); renderAdminList(); }
-      showToast("✅","Producto actualizado");
+      // Update locally FIRST — visible de inmediato
+      const idx = products.findIndex(p=>p.id===editId);
+      if (idx >= 0) {
+        products[idx] = { ...products[idx], name, price, cat, desc, badge };
+        if (imgUrl) products[idx].img = imgUrl;
+      }
+      saveLocal();
+      renderProducts();
+      renderCarousel();
+      renderCategories();
+      renderAdminList();
+      // Then sync to Firebase in background
+      if (firebaseReady && db) {
+        const data = { name, price, cat, desc, badge };
+        if (imgUrl) data.img = imgUrl;
+        updateDoc(doc(db,"productos",editId), data).catch(e=>console.warn("Firebase sync:",e));
+      }
+      showToast("✅", `"${name}" actualizado correctamente`);
     } else {
-      const data = { name,price,cat,desc,badge,icon:catIcons[cat]||"📦",img:imgUrl,createdAt:firebaseReady?serverTimestamp():new Date() };
-      if (firebaseReady) { await addDoc(collection(db,"productos"),data); }
-      else { products.push({...data,id:"local_"+Date.now()}); saveLocal(); renderProducts(); renderCategories(); renderAdminList(); }
-      showToast("✅",`"${name}" publicado 🌐`);
+      // New product
+      const newId = "local_" + Date.now();
+      const data  = { name, price, cat, desc, badge, icon:catIcons[cat]||"📦", img:imgUrl||null, createdAt: new Date().toISOString(), id: newId };
+      // Add locally first
+      products.push(data);
+      saveLocal();
+      renderProducts();
+      renderCarousel();
+      renderCategories();
+      renderAdminList();
+      // Then sync to Firebase
+      if (firebaseReady && db) {
+        const fbData = { name, price, cat, desc, badge, icon:catIcons[cat]||"📦", img:imgUrl||null, createdAt: serverTimestamp() };
+        addDoc(collection(db,"productos"), fbData)
+          .then(docRef => {
+            // Update local id to match Firebase id
+            const li = products.findIndex(p=>p.id===newId);
+            if(li>=0) products[li].id = docRef.id;
+            saveLocal();
+          })
+          .catch(e => console.warn("Firebase add:", e));
+      }
+      showToast("✅", `"${name}" publicado en el catálogo 🌐`);
     }
     window.cancelEdit();
-  } catch(e) { console.error(e); showToast("❌","Error al guardar: "+e.message); }
-  btn.disabled=false; btn.textContent="💾 Guardar Producto";
+  } catch(e) {
+    console.error(e);
+    showToast("❌","Error: "+e.message);
+  }
+  btn.disabled=false;
+  btn.textContent="💾 Guardar Producto";
 });
 
 expose("cancelEdit", () => {
   document.getElementById("formTitle").textContent="➕ Nuevo Producto";
   document.getElementById("cancelEditBtn").style.display="none";
-  ["f-name","f-price","f-desc"].forEach(id=>document.getElementById(id).value="");
-  document.getElementById("f-badge").value="";
-  document.getElementById("f-img").value="";
-  document.getElementById("imgPreview").style.display="none";
-  document.getElementById("editingId").value="";
+  ["f-name","f-price","f-desc"].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value="";
+  });
+  const badge=document.getElementById("f-badge"); if(badge) badge.value="";
+  const fimg=document.getElementById("f-img");   if(fimg)  fimg.value="";
+  const prev=document.getElementById("imgPreview"); if(prev) prev.style.display="none";
+  const eid=document.getElementById("editingId");   if(eid)  eid.value="";
   currentImageData=null;
 });
 
